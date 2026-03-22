@@ -136,3 +136,207 @@ curl -X POST http://localhost:8000/ingest/yfinance \
 ```bash
 curl http://localhost:8000/ingest/yfinance/<job_id>
 ```
+
+## Configurando a AWS
+
+### Criando um novo usuário IAM
+1. Acesse o console AWS IAM.
+2. Clique em "Users" e depois em "Add user".
+3. Digite um nome de usuário (ex: `techchallenge-dev`).
+4. Selecione "Programmatic access" para permitir acesso via API.
+5. Selecione "Attach policies directly" e crie uma nova política personalizada com as seguintes permissões:
+   1. Essas permissões permitem que o usuário crie e gerencie recursos necessários para o pipeline, como buckets S3, funções Lambda, jobs Glue e consultas Athena. O ideal em produção seria restringir os recursos específicos, mas para desenvolvimento e testes, o acesso amplo pode ser mais prático, ajudando em ambientes de aprendizado.
+```json
+{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Sid": "S3ProjectAccess",
+			"Effect": "Allow",
+			"Action": [
+				"s3:CreateBucket",
+				"s3:ListAllMyBuckets",
+				"s3:ListBucket",
+				"s3:GetBucketLocation",
+				"s3:GetBucketNotification",
+				"s3:PutBucketNotification",
+				"s3:GetBucketPolicy",
+				"s3:PutBucketPolicy",
+				"s3:GetBucketAcl",
+				"s3:PutBucketAcl",
+				"s3:GetObject",
+				"s3:PutObject",
+				"s3:DeleteObject"
+			],
+			"Resource": "*"
+		},
+		{
+			"Sid": "LambdaProjectAccess",
+			"Effect": "Allow",
+			"Action": [
+				"lambda:CreateFunction",
+				"lambda:GetFunction",
+				"lambda:UpdateFunctionCode",
+				"lambda:UpdateFunctionConfiguration",
+				"lambda:InvokeFunction",
+				"lambda:AddPermission",
+				"lambda:RemovePermission",
+				"lambda:CreateEventSourceMapping",
+				"lambda:DeleteFunction",
+				"lambda:ListFunctions",
+				"lambda:GetPolicy"
+			],
+			"Resource": "*"
+		},
+		{
+			"Sid": "GlueProjectAccess",
+			"Effect": "Allow",
+			"Action": [
+				"glue:CreateJob",
+				"glue:UpdateJob",
+				"glue:GetJob",
+				"glue:StartJobRun",
+				"glue:GetJobRun",
+				"glue:GetJobRuns",
+				"glue:BatchStopJobRun",
+				"glue:CreateCrawler",
+				"glue:UpdateCrawler",
+				"glue:StartCrawler",
+				"glue:StopCrawler",
+				"glue:GetCrawler",
+				"glue:GetCrawlers",
+				"glue:CreateDatabase",
+				"glue:GetDatabase",
+				"glue:GetDatabases",
+				"glue:CreateTable",
+				"glue:GetTable",
+				"glue:GetTables",
+				"glue:UpdateTable",
+				"glue:DeleteTable"
+			],
+			"Resource": "*"
+		},
+		{
+			"Sid": "AthenaProjectAccess",
+			"Effect": "Allow",
+			"Action": [
+				"athena:StartQueryExecution",
+				"athena:GetQueryExecution",
+				"athena:GetQueryResults",
+				"athena:StopQueryExecution",
+				"athena:ListWorkGroups",
+				"athena:GetWorkGroup"
+			],
+			"Resource": "*"
+		},
+		{
+			"Sid": "GlueCatalogAndLogsAccess",
+			"Effect": "Allow",
+			"Action": [
+				"logs:CreateLogGroup",
+				"logs:CreateLogStream",
+				"logs:PutLogEvents",
+				"logs:DescribeLogGroups",
+				"logs:DescribeLogStreams",
+				"cloudwatch:PutMetricData"
+			],
+			"Resource": "*"
+		},
+		{
+			"Sid": "AllowRoleManagementForProject",
+			"Effect": "Allow",
+			"Action": [
+				"iam:CreateRole",
+				"iam:GetRole",
+				"iam:PassRole",
+				"iam:AttachRolePolicy",
+				"iam:PutRolePolicy",
+				"iam:UpdateAssumeRolePolicy",
+				"iam:TagRole"
+			],
+			"Resource": "*"
+		},
+		{
+			"Sid": "IAMConsoleReadAccess",
+			"Effect": "Allow",
+			"Action": [
+				"iam:ListUsers",
+				"iam:GetUser",
+				"iam:ListRoles",
+				"iam:GetRole",
+				"iam:ListPolicies",
+				"iam:GetPolicy",
+				"iam:GetPolicyVersion",
+				"iam:ListAttachedUserPolicies",
+				"iam:ListAttachedRolePolicies",
+				"iam:ListRolePolicies",
+				"iam:ListUserPolicies",
+				"iam:GetAccountSummary",
+				"iam:ListMFADevices",
+				"iam:ListInstanceProfiles",
+				"iam:ListOpenIDConnectProviders",
+				"iam:ListSAMLProviders",
+				"iam:GenerateServiceLastAccessedDetails",
+				"iam:GetServiceLastAccessedDetails"
+			],
+			"Resource": "*"
+		}
+	]
+}
+```
+   2. Revise as permissões e clique em "Next: Tags" (opcional) e depois em "Next: Review".
+   3. Dê um nome à política (ex: `policy-fiap-tech-challenge-2`) e clique em "Create policy".
+6. Usuário criado com sucesso! Anote a:
+   1. Console sign-in URL (ex: `https://697169065885.signin.aws.amazon.com/console`).
+   2. User name (ex: `techchallenge-dev`).
+   3. Console password (confidencial).
+7. Use a URL de login para acessar o console AWS com o usuário criado e a senha fornecida.
+
+### Criar Access Key para o usuário IAM
+1. No console AWS IAM, clique em "Users" e selecione o usuário criado (ex: `techchallenge-dev`).
+2. Clique em "Security credentials" e depois em "Create access key".
+3. Selecione "Command Line Interface (CLI)" e clique em "Next".
+4. Copie a Access Key ID e Secret Access Key gerados. 
+   1. **Importante:** O Secret Access Key só é mostrado uma vez, então guarde-o em um local seguro (ex: gerenciador de senhas).
+
+### Configurando o CLI V2
+1. Instale o AWS CLI V2 seguindo as instruções oficiais: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+2. Abra o terminal e configure o AWS CLI com as credenciais do usuário criado:
+```bash
+aws configure
+```
+3. Insira a Access Key ID, Secret Access Key, região padrão (ex: `sa-east-1`) e formato de saída (ex: `json`).
+4. Teste a configuração listando os buckets S3:
+```bash
+aws s3 ls
+```
+
+### Criando o bucket S3
+1. No console AWS S3, clique em "Create bucket".
+2. Dê um nome único ao bucket (ex: `bovespa-data')
+3. Sobre o Versionamento:
+   1. Para esse projeto, não é obrigatório. Como vou gravar dados particionados por data e ticker, já vai ter organização suficiente.
+4. O resto das opções pode ser mantido como padrão para simplificar a configuração.
+5. Clique em "Create bucket" para finalizar.
+6. Clique no bucket;
+   1. Crie as pastas `raw/` e `refined/` para organizar os dados.
+
+## Script de Ingestão
+O script de ingestão utiliza a biblioteca `yfinance` para coletar dados diários de ações ou índices da B3 e salva os dados em formato Parquet no S3, seguindo a estrutura de partição por data.
+1. O script será executado localmente e de forma manual.
+2. Busca os dados usando a API do Yahoo Finance.
+3. Organiza em DataFrame.
+4. Converte para Parquet.
+5. Salva no S3 com partição por data (`dt=YYYY-MM-DD`).
+
+### Codificando
+1. Instale as dependências necessárias:
+```bash
+pip install boto3 pandas pyarrow yfinance
+```
+2. Crie o script de ingestão (ex: `ingest_bovespa.py`) com o seguinte conteúdo:
+3. Implemente o script de ingestão.
+
+### Bucket
+Para separar este projeto do restante dos dados, foi criado um bucket específico para a Bovespa:
+```bash
