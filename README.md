@@ -329,6 +329,370 @@ O script de ingestão utiliza a biblioteca `yfinance` para coletar dados diário
 4. Converte para Parquet.
 5. Salva no S3 com partição por data (`dt=YYYY-MM-DD`).
 
+## Configurando o Lambda
+1. Entrar no IAM para criar a role necessária para a Lambda.
+   1. No menu esquerdo, clique em "Roles" e depois em "Create role".
+   2. Em "Select type of trusted entity", escolha "AWS service".
+   3. Em Use case, selecione "Lambda" e clique em "Next".
+   4. Adicione a política `AWSLambdaBasicExecutionRole` para permitir que a Lambda escreva logs no CloudWatch.
+   5. Crie uma policy personalizada com as seguintes permissões para permitir que a Lambda inicie o Glue Job:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "StartSpecificGlueJob",
+      "Effect": "Allow",
+      "Action": [
+        "glue:StartJobRun",
+        "glue:GetJob",
+        "glue:GetJobRun",
+        "glue:GetJobRuns"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+   6. Dê um nome à role (ex: `LambdaStartGlueJobPolicy`) e finalize a criação.
+   7. Volte para a criação de role, atualize e marque também a policy personalizada criada.
+   8. Defina o nome da role (ex: `LabRole-Lambda-TechChallenge`) e finalize a criação.
+2. Criando o Lambda function:
+   1. Create function.
+   2. Author from scratch.
+   3. Function name: `lambda-start-glue-bovespa`.
+   4. Runtime: Python 3.13 (ou mais recente disponível).
+   5. Architecture: x86_64 (para compatibilidade com dependências).
+   6. Execution role: Use an existing role e selecione a role criada para a Lambda (ex: `LabRole-Lambda-TechChallenge`).
+   7. Após criada, vá na aba de código e implemente a função para iniciar o Glue Job usando `boto3`:
+```python
+import json
+import urllib.parse
+import boto3
+from botocore.exceptions import ClientError
+
+glue = boto3.client("glue")
+
+GLUE_JOB_NAME = "glue-etl-bovespa-refined"
+
+
+def extract_process_date_from_key(key: str) -> str:
+    """
+    Extrai a data de uma key no formato:
+    raw/date=YYYY-MM-DD/ticker=XXXX/dados.parquet
+    """
+    parts = key.split("/")
+    for part in parts:
+        if part.startswith("date="):
+            return part.replace("date=", "")
+    raise ValueError(f"Não foi possível extrair process_date da key: {key}")
+
+
+def lambda_handler(event, context):
+    print("Evento recebido:")
+    print(json.dumps(event))
+
+    for record in event.get("Records", []):
+        event_name = record.get("eventName", "")
+        if not event_name.startswith("ObjectCreated"):
+            continue
+
+        bucket = record["s3"]["bucket"]["name"]
+        key = urllib.parse.unquote_plus(record["s3"]["object"]["key"])
+
+        if not key.startswith("raw/"):
+            print(f"Ignorando objeto fora de raw/: {key}")
+            continue
+
+        process_date = extract_process_date_from_key(key)
+
+        print(
+            f"Tentando iniciar Glue Job para bucket={bucket}, "
+            f"process_date={process_date}, key={key}"
+        )
+
+        try:
+            response = glue.start_job_run(
+                JobName=GLUE_JOB_NAME,
+                Arguments={
+                    "--source_bucket": bucket,
+                    "--process_date": process_date
+                }
+            )
+            print(f"Glue Job iniciado com JobRunId: {response['JobRunId']}")
+
+        except ClientError as e:
+            error_code = e.response["Error"]["Code"]
+
+            if error_code == "ConcurrentRunsExceededException":
+                print(
+                    f"Glue job já está em execução. "
+                    f"Novo disparo ignorado para process_date={process_date}, key={key}"
+                )
+            else:
+                raise
+
+    return {
+        "statusCode": 200,
+        "body": json.dumps("Evento processado com sucesso")
+    }
+```
+   8. Clique em deploy para salvar a função.
+   9. O que esse código faz:
+      1.  recebe o evento do S3
+      2.  decodifica a key do objeto
+      3.  ignora qualquer coisa fora de raw/
+      4.  chama o Glue Job: glue-etl-bovespa-refined
+      5.  passa os argumentos: --source_bucket e --source_key
+   10. Configuração recomendada:
+       1.  Vá em General configuration e aumente a Memory para 256 MB e o timeout para 3 minuto, para garantir que a Lambda tenha recursos suficientes para iniciar o Glue Job mesmo em picos de carga.
+       2. Também pode configurar a variável de ambiente GLUE_JOB_NAME para evitar hardcoding do nome do job no código: GLUE_JOB_NAME = glue-etl-bovespa-refined
+    11. Também é possível fazer um teste manual da Lambda usando um evento de exemplo do S3 para garantir que a função está funcionando corretamente antes de configurar o gatilho:
+        1.  Na tela da Lambda, clique em "Test" e depois em "Configure test event".
+        2.  Create new event e deixe as demais configurações como estão.
+		3.  No editor de evento, cole o seguinte JSON de exemplo, que simula um evento de criação de objeto no S3 dentro do prefixo raw/.
+	    4. Salve o evento de teste e clique em "Test" para executar a Lambda com esse evento simulado.
+		5. Verifique os logs no CloudWatch para confirmar que a Lambda processou o evento corretamente e iniciou o Glue Job.
+
+## Configurando o Glue Jobs
+1. Entrar no IAM para criar a role necessária para o Glue Job.
+   1. No menu esquerdo, clique em "Roles" e depois em "Create role".
+   2. Em "Select type of trusted entity", escolha "AWS service".
+   3. Em Use case, selecione "Glue" e clique em "Next".
+   4. Adicione a política `AWSGlueServiceRole` para permitir que o Glue execute as tarefas necessárias.
+   5. Crie uma policy personalizada com as seguintes permissões para permitir que o Glue acesse os buckets S3:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListBucketAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "arn:aws:s3:::bovespa-data"
+    },
+    {
+      "Sid": "ReadRawWriteRefinedAndAthenaResults",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::bovespa-data/raw/*",
+        "arn:aws:s3:::bovespa-data/refined/*",
+        "arn:aws:s3:::bovespa-data/athena-results/*"
+      ]
+    }
+  ]
+}
+```
+   6. Dê um nome à policy (ex: `GlueS3BovespaDataAccessPolicy`) e finalize a criação.
+   7. Volte para a criação de role, atualize e marque também a policy personalizada criada.
+   8. Defina o nome da role (ex: `LabRole-Glue-TechChallenge`) e finalize a criação.
+
+### Estratégia do ETL
+Vamos ler um arquivo bruto com colunas como:
+* date
+* ticker
+* open
+* high
+* low
+* close
+* volume
+
+E no Glue vamos:
+* renomear open para opening_price
+* renomear close para closing_price
+* calcular price_range = high - low
+* calcular daily_return = closing_price - opening_price
+* calcular média móvel de 3 períodos para closing_price
+* manter date e ticker
+* gravar no refined/
+
+### Passo a passo
+1. Entre no AWS Glue.
+2. Clique em "ETL Jobs"
+3. Na tela de Create job, clique em 'Author code with a script editor".
+4. Selecione Spark no engine, opção Start fresh.
+5. Renomeie o job (ex: `glue-etl-bovespa-refined`).
+6. No script, cole o código python para realizar as transformações necessárias:
+```python
+import sys
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+args = getResolvedOptions(
+    sys.argv,
+    [
+        "JOB_NAME",
+        "source_bucket",
+        "process_date"
+    ]
+)
+
+source_bucket = args["source_bucket"]
+process_date = args["process_date"]
+
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+
+input_path = f"s3://{source_bucket}/raw/date={process_date}/"
+output_path = f"s3://{source_bucket}/refined/"
+
+print(f"Lendo dados brutos de: {input_path}")
+print(f"Gravando dados refinados em: {output_path}")
+
+df = spark.read.parquet(input_path)
+
+required_columns = {"date", "ticker", "open", "high", "low", "close", "volume"}
+missing_columns = required_columns - set(df.columns)
+
+if missing_columns:
+    raise ValueError(
+        f"Colunas obrigatórias ausentes: {missing_columns}. "
+        f"Colunas encontradas: {df.columns}"
+    )
+
+df = (
+    df
+    .withColumnRenamed("open", "opening_price")
+    .withColumnRenamed("close", "closing_price")
+)
+
+df = df.withColumn("date", F.to_timestamp("date"))
+
+df = (
+    df
+    .withColumn("price_range", F.col("high") - F.col("low"))
+    .withColumn("daily_return", F.col("closing_price") - F.col("opening_price"))
+)
+
+window_spec = Window.partitionBy("ticker").orderBy("date").rowsBetween(-2, 0)
+
+df = df.withColumn(
+    "moving_avg_3",
+    F.avg("closing_price").over(window_spec)
+)
+
+summary_df = (
+    df.groupBy("ticker")
+    .agg(
+        F.count("*").alias("record_count"),
+        F.sum("volume").alias("total_volume"),
+        F.max("high").alias("max_price"),
+        F.min("low").alias("min_price")
+    )
+)
+
+print("Resumo agregado por ticker:")
+summary_df.show(truncate=False)
+
+df = df.withColumn("process_date", F.lit(process_date))
+
+(
+    df.write
+    .mode("overwrite")
+    .partitionBy("process_date", "ticker")
+    .parquet(output_path)
+)
+
+print(f"Dados refinados salvos em: {output_path}")
+```
+7. Em "Job details", selecione a role criada para o Glue (ex: `LabRole-Glue-TechChallenge`).
+   1. Glue version: Selecione a mais recente.
+   2. Language: Python.
+   3. Worker type: G 1X (a mais barata).
+   4. Worker count: 2 (para garantir paralelismo mínimo).
+
+Atenção: Na parte de parâmetros do job, não precisa colocar source_bucket e source_key fixos agora, porque a Lambda vai passar isso dinamicamente quando chamar o Glue.
+
+## Configurando o gatilho no S3
+1. Acesse o console AWS S3 e clique no bucket criado (ex: `bovespa-data`).
+2. Vá para a aba "Properties" e role até "Event notifications".
+3. Clique em "Create event notification".
+4. Event name: trigger-lambda-raw-upload
+5. Event types: Marque "All object create events".
+6. Prefix: raw/
+7. Destination: Lambda function
+8. Function: Selecione a Lambda criada (ex: `lambda-start-glue-bovespa`).
+9. Salve a configuração.
+
+## Configurando o Glue Data Catalog
+Vamos criar um Crawler para atualizar o catálogo automaticamente após o job de ETL, garantindo que a tabela esteja sempre atualizada com os dados refinados.
+1. Crie uma estrutura no S3 para os resultados do Athena (ex: `athena-results/`).
+2. Abra o console AWS Glue e vá para "Data Catalog" e depois "Crawlers".
+3. Clique em "Create crawler".
+4. Crawler name: `crawler-bovespa-refined`
+5. Is your data already mapped to Glue tables? No
+6. Add a data source: S3
+7. Location of S3 data: In this account, select the bucket e marque a pasta `s3://bovespa-data/refined/`.
+8. Clique em "Next".
+9. Escolha um IAM role para o crawler (pode ser a mesma do Glue Job, ex: `LabRole-Glue-TechChallenge`) e clique em "Next".
+10. Em Output configuration, em Target database, selecione "Add database" e crie um novo banco de dados (ex: `bovespa_db`).
+    1.  Database type: Glue Database
+11. Selecione esse database criado.
+12. Crawler schedule: On demand
+13. Crie o crawler.
+14. Abra o crawler criado e clique em "Run crawler" para executar a primeira varredura e criar a tabela no Glue Data Catalog.
+    1.  Verifique se o status do crawler mudou para "Succeeded"
+    2.  Na aba "Data catalog", vá em "Tables" dentro do database criado e confirme que a tabela foi criada com o schema correto.
+
+## Configurando o Athena
+1. Acesse o console AWS Athena.
+2. Na primeira vez, será solicitado configurar um local de saída para os resultados das consultas.
+   1. Use o bucket criado para isso (ex: `s3://bovespa-data/athena-results/`).
+3. Em "Query settings">"Query result encryption", clique em "Manage" e coloque o bucket criado para salvar os resultados (ex: `s3://bovespa-data/athena-results/`).
+
+Query exemplo:
+```sql
+SELECT * FROM "AwsDataCatalog"."bovespa_db"."refined"
+WHERE process_date = '2026-03-23'
+LIMIT 10;
+```
+---
+```sql
+SELECT
+    ticker,
+    process_date,
+    date,
+    opening_price,
+    closing_price,
+    price_range,
+    daily_return,
+    moving_avg_3,
+    volume
+FROM "AwsDataCatalog"."bovespa_db"."refined"
+WHERE process_date = '2026-03-23'
+ORDER BY process_date DESC, ticker, date DESC;
+```
+---
+```sql
+SELECT
+    ticker,
+    process_date,
+    COUNT(*) AS total_registros,
+    SUM(volume) AS volume_total,
+    MAX(closing_price) AS max_closing_price,
+    MIN(closing_price) AS min_closing_price,
+    AVG(moving_avg_3) AS avg_moving_avg_3
+FROM "AwsDataCatalog"."bovespa_db"."refined"
+WHERE process_date = '2026-03-23'
+GROUP BY ticker, process_date
+ORDER BY process_date DESC, ticker;
+```
+
+
+
+
 ### Codificando
 1. Instale as dependências necessárias:
 ```bash
