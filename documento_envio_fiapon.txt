@@ -1,0 +1,2 @@
+Link do vídeo: https://youtu.be/X1v6E7OrbgY
+Repositório do GITHUB com documentação e script de ingestão Bovespa: https://github.com/rafatega/fiap-tech-challenge-fase2

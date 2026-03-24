@@ -1,3 +1,32 @@
+Link do vídeo de apresentação: https://youtu.be/X1v6E7OrbgY
+
+- [FIAP Tech Challenge Fase 2](#fiap-tech-challenge-fase-2)
+  - [1. Resumo Executivo](#1-resumo-executivo)
+  - [2. Objetivo do Desafio](#2-objetivo-do-desafio)
+  - [2.1 Escopo desta entrega](#21-escopo-desta-entrega)
+  - [3. Arquitetura da Solucao](#3-arquitetura-da-solucao)
+    - [3.1 Fluxo operacional](#31-fluxo-operacional)
+  - [4. Componentes do Projeto](#4-componentes-do-projeto)
+    - [4.1 Codigo versionado](#41-codigo-versionado)
+    - [4.2 Servicos AWS utilizados](#42-servicos-aws-utilizados)
+  - [5. Estrutura de Dados no S3](#5-estrutura-de-dados-no-s3)
+    - [5.1 Camada bruta (`raw`)](#51-camada-bruta-raw)
+    - [5.2 Camada refinada (`refined`)](#52-camada-refinada-refined)
+  - [6. Regras de Transformacao (Glue ETL)](#6-regras-de-transformacao-glue-etl)
+  - [7. Aderencia aos Requisitos do PDF](#7-aderencia-aos-requisitos-do-pdf)
+  - [8. Execucao do Projeto](#8-execucao-do-projeto)
+    - [8.1 Pre-requisitos](#81-pre-requisitos)
+    - [8.2 Instalar dependencias](#82-instalar-dependencias)
+    - [8.3 Executar ingestao local](#83-executar-ingestao-local)
+    - [8.4 Validar processamento na AWS](#84-validar-processamento-na-aws)
+  - [9. Consultas de Exemplo (Athena)](#9-consultas-de-exemplo-athena)
+  - [10. Seguranca e Governanca](#10-seguranca-e-governanca)
+  - [11. Evidencias para Apresentacao](#11-evidencias-para-apresentacao)
+  - [13. Configurando o ambiente AWS](#13-configurando-o-ambiente-aws)
+    - [Usuário IAM](#usuário-iam)
+    - [Role, Policy e código Lambda](#role-policy-e-código-lambda)
+    - [Role, Policy e código Glue](#role-policy-e-código-glue)
+
 # FIAP Tech Challenge Fase 2
 
 Pipeline batch para ingestao, transformacao e consulta de dados de mercado financeiro (B3) usando AWS.
