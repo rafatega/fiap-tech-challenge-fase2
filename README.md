@@ -319,8 +319,9 @@ policy: policy-fiap-tech-challenge-2
 }
 ```
 
-### Role e Policy Lambda
-Criei uma role `LabRole-Lambda-TechChallenge` para a função Lambda, com a seguinte policy:LambdaStartGlueJobPolicy
+### Role, Policy e código Lambda
+Criei uma role `LabRole-Lambda-TechChallenge` para a função Lambda, com a seguinte 
+policy:LambdaStartGlueJobPolicy
 ```json
 {
   "Version": "2012-10-17",
@@ -339,9 +340,83 @@ Criei uma role `LabRole-Lambda-TechChallenge` para a função Lambda, com a segu
   ]
 }
 ```
+E o código da função Lambda é o seguinte:
+```python
+import json
+import urllib.parse
+import boto3
+from botocore.exceptions import ClientError
 
-### Role e Policy Glue
-Criei uma role `LabRole-Glue-TechChallenge` para o job Glue, com a seguinte policy:GlueS3BovespaDataAccessPolicy
+glue = boto3.client("glue")
+
+GLUE_JOB_NAME = "glue-etl-bovespa-refined"
+
+
+def extract_process_date_from_key(key: str) -> str:
+    """
+    Extrai a data de uma key no formato:
+    raw/date=YYYY-MM-DD/ticker=XXXX/dados.parquet
+    """
+    parts = key.split("/")
+    for part in parts:
+        if part.startswith("date="):
+            return part.replace("date=", "")
+    raise ValueError(f"Não foi possível extrair process_date da key: {key}")
+
+
+def lambda_handler(event, context):
+    print("Evento recebido:")
+    print(json.dumps(event))
+
+    for record in event.get("Records", []):
+        event_name = record.get("eventName", "")
+        if not event_name.startswith("ObjectCreated"):
+            continue
+
+        bucket = record["s3"]["bucket"]["name"]
+        key = urllib.parse.unquote_plus(record["s3"]["object"]["key"])
+
+        if not key.startswith("raw/"):
+            print(f"Ignorando objeto fora de raw/: {key}")
+            continue
+
+        process_date = extract_process_date_from_key(key)
+
+        print(
+            f"Tentando iniciar Glue Job para bucket={bucket}, "
+            f"process_date={process_date}, key={key}"
+        )
+
+        try:
+            response = glue.start_job_run(
+                JobName=GLUE_JOB_NAME,
+                Arguments={
+                    "--source_bucket": bucket,
+                    "--process_date": process_date
+                }
+            )
+            print(f"Glue Job iniciado com JobRunId: {response['JobRunId']}")
+
+        except ClientError as e:
+            error_code = e.response["Error"]["Code"]
+
+            if error_code == "ConcurrentRunsExceededException":
+                print(
+                    f"Glue job já está em execução. "
+                    f"Novo disparo ignorado para process_date={process_date}, key={key}"
+                )
+            else:
+                raise
+
+    return {
+        "statusCode": 200,
+        "body": json.dumps("Evento processado com sucesso")
+    }
+```
+
+### Role, Policy e código Glue
+Criei uma role `LabRole-Glue-TechChallenge` para o job Glue, com a seguinte 
+policy:GlueS3BovespaDataAccessPolicy
 ```json
 {
   "Version": "2012-10-17",
@@ -371,4 +446,91 @@ Criei uma role `LabRole-Glue-TechChallenge` para o job Glue, com a seguinte poli
     }
   ]
 }
+```
+E o código do job Glue é o seguinte:
+```python
+import sys
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+args = getResolvedOptions(
+    sys.argv,
+    [
+        "JOB_NAME",
+        "source_bucket",
+        "process_date"
+    ]
+)
+
+source_bucket = args["source_bucket"]
+process_date = args["process_date"]
+
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+
+input_path = f"s3://{source_bucket}/raw/date={process_date}/"
+output_path = f"s3://{source_bucket}/refined/"
+
+print(f"Lendo dados brutos de: {input_path}")
+print(f"Gravando dados refinados em: {output_path}")
+
+df = spark.read.parquet(input_path)
+
+required_columns = {"date", "ticker", "open", "high", "low", "close", "volume"}
+missing_columns = required_columns - set(df.columns)
+
+if missing_columns:
+    raise ValueError(
+        f"Colunas obrigatórias ausentes: {missing_columns}. "
+        f"Colunas encontradas: {df.columns}"
+    )
+
+df = (
+    df
+    .withColumnRenamed("open", "opening_price")
+    .withColumnRenamed("close", "closing_price")
+)
+
+df = df.withColumn("date", F.to_timestamp("date"))
+
+df = (
+    df
+    .withColumn("price_range", F.col("high") - F.col("low"))
+    .withColumn("daily_return", F.col("closing_price") - F.col("opening_price"))
+)
+
+window_spec = Window.partitionBy("ticker").orderBy("date").rowsBetween(-2, 0)
+
+df = df.withColumn(
+    "moving_avg_3",
+    F.avg("closing_price").over(window_spec)
+)
+
+summary_df = (
+    df.groupBy("ticker")
+    .agg(
+        F.count("*").alias("record_count"),
+        F.sum("volume").alias("total_volume"),
+        F.max("high").alias("max_price"),
+        F.min("low").alias("min_price")
+    )
+)
+
+print("Resumo agregado por ticker:")
+summary_df.show(truncate=False)
+
+df = df.withColumn("process_date", F.lit(process_date))
+
+(
+    df.write
+    .mode("overwrite")
+    .partitionBy("process_date", "ticker")
+    .parquet(output_path)
+)
+
+print(f"Dados refinados salvos em: {output_path}")
 ```
