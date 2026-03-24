@@ -168,23 +168,207 @@ Boas praticas adotadas:
 
 ## 11. Evidencias para Apresentacao
 Checklist objetivo para demonstracao:
-- [ ] arquivo Parquet em `raw/date=.../ticker=.../`
-- [ ] evento S3 configurado para a Lambda
-- [ ] log da Lambda com `StartJobRun`
-- [ ] job Glue com transformacoes obrigatorias
-- [ ] arquivo Parquet em `refined/process_date=.../ticker=.../`
-- [ ] tabela no Glue Data Catalog
-- [ ] query no Athena com resultado retornado
+- [✅] arquivo Parquet em `raw/date=.../ticker=.../`
+- [✅] evento S3 configurado para a Lambda
+- [✅] log da Lambda com `StartJobRun`
+- [✅] job Glue com transformacoes obrigatorias
+- [✅] arquivo Parquet em `refined/process_date=.../ticker=.../`
+- [✅] tabela no Glue Data Catalog
+- [✅] query no Athena com resultado retornado
 
-## 12. Roteiro de Apresentacao (5-8 minutos)
-1. Contexto e objetivo do desafio (30-45s).
-2. Arquitetura fim a fim (1-2 min, usar o diagrama e reforcar que o escopo e somente B3).
-3. Demonstracao do fluxo: S3 -> Lambda -> Glue -> Catalog -> Athena (2-3 min).
-4. Evidencia das transformacoes obrigatorias do ETL (1-2 min).
-5. Fechamento com ganhos tecnicos: escalabilidade, rastreabilidade e custo (30-45s).
+## 13. Configurando o ambiente AWS
+### Usuário IAM
+Criei um usuário IAM `techchallenge-dev` com policy que o usuário crie e gerencie recursos necessários para o pipeline, como buckets S3, funções Lambda, jobs Glue e consultas Athena. O ideal em produção seria restringir os recursos específicos, mas para desenvolvimento e testes, o acesso amplo pode ser mais prático, ajudando em ambientes de aprendizado. A partir desse usuário foram geradas as chaves de acesso para configurar o AWS CLI e permitir que o script de ingestão e outros componentes interajam com os serviços AWS.
+policy: policy-fiap-tech-challenge-2
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "S3ProjectAccess",
+            "Effect": "Allow",
+            "Action": [
+                "s3:CreateBucket",
+                "s3:ListAllMyBuckets",
+                "s3:ListBucket",
+                "s3:GetBucketLocation",
+                "s3:GetBucketNotification",
+                "s3:PutBucketNotification",
+                "s3:GetBucketPolicy",
+                "s3:PutBucketPolicy",
+                "s3:GetBucketAcl",
+                "s3:PutBucketAcl",
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:DeleteObject"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "LambdaProjectAccess",
+            "Effect": "Allow",
+            "Action": [
+                "lambda:CreateFunction",
+                "lambda:GetFunction",
+                "lambda:UpdateFunctionCode",
+                "lambda:UpdateFunctionConfiguration",
+                "lambda:InvokeFunction",
+                "lambda:AddPermission",
+                "lambda:RemovePermission",
+                "lambda:CreateEventSourceMapping",
+                "lambda:DeleteFunction",
+                "lambda:ListFunctions",
+                "lambda:GetPolicy"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "GlueProjectAccess",
+            "Effect": "Allow",
+            "Action": [
+                "glue:CreateJob",
+                "glue:UpdateJob",
+                "glue:GetJob",
+                "glue:StartJobRun",
+                "glue:GetJobRun",
+                "glue:GetJobRuns",
+                "glue:BatchStopJobRun",
+                "glue:CreateCrawler",
+                "glue:UpdateCrawler",
+                "glue:StartCrawler",
+                "glue:StopCrawler",
+                "glue:GetCrawler",
+                "glue:GetCrawlers",
+                "glue:CreateDatabase",
+                "glue:GetDatabase",
+                "glue:GetDatabases",
+                "glue:CreateTable",
+                "glue:GetTable",
+                "glue:GetTables",
+                "glue:UpdateTable",
+                "glue:DeleteTable"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "AthenaProjectAccess",
+            "Effect": "Allow",
+            "Action": [
+                "athena:StartQueryExecution",
+                "athena:GetQueryExecution",
+                "athena:GetQueryResults",
+                "athena:StopQueryExecution",
+                "athena:ListWorkGroups",
+                "athena:GetWorkGroup"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "GlueCatalogAndLogsAccess",
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+                "logs:DescribeLogGroups",
+                "logs:DescribeLogStreams",
+                "cloudwatch:PutMetricData"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "AllowRoleManagementForProject",
+            "Effect": "Allow",
+            "Action": [
+                "iam:CreateRole",
+                "iam:GetRole",
+                "iam:PassRole",
+                "iam:AttachRolePolicy",
+                "iam:PutRolePolicy",
+                "iam:UpdateAssumeRolePolicy",
+                "iam:TagRole"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "IAMConsoleReadAccess",
+            "Effect": "Allow",
+            "Action": [
+                "iam:ListUsers",
+                "iam:GetUser",
+                "iam:ListRoles",
+                "iam:GetRole",
+                "iam:ListPolicies",
+                "iam:GetPolicy",
+                "iam:GetPolicyVersion",
+                "iam:ListAttachedUserPolicies",
+                "iam:ListAttachedRolePolicies",
+                "iam:ListRolePolicies",
+                "iam:ListUserPolicies",
+                "iam:GetAccountSummary",
+                "iam:ListMFADevices",
+                "iam:ListInstanceProfiles",
+                "iam:ListOpenIDConnectProviders",
+                "iam:ListSAMLProviders",
+                "iam:GenerateServiceLastAccessedDetails",
+                "iam:GetServiceLastAccessedDetails"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+```
 
-## 13. Melhorias Futuras
-- orquestracao com EventBridge + Step Functions;
-- CI/CD para versionamento de scripts Glue/Lambda;
-- testes automatizados para contratos de schema e qualidade de dados;
-- alarmes de falha em Lambda/Glue e monitoramento por metricas.
+### Role e Policy Lambda
+Criei uma role `LabRole-Lambda-TechChallenge` para a função Lambda, com a seguinte policy:LambdaStartGlueJobPolicy
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "StartSpecificGlueJob",
+      "Effect": "Allow",
+      "Action": [
+        "glue:StartJobRun",
+        "glue:GetJob",
+        "glue:GetJobRun",
+        "glue:GetJobRuns"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+### Role e Policy Glue
+Criei uma role `LabRole-Glue-TechChallenge` para o job Glue, com a seguinte policy:GlueS3BovespaDataAccessPolicy
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListBucketAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "arn:aws:s3:::bovespa-data"
+    },
+    {
+      "Sid": "ReadRawWriteRefinedAndAthenaResults",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::bovespa-data/raw/*",
+        "arn:aws:s3:::bovespa-data/refined/*",
+        "arn:aws:s3:::bovespa-data/athena-results/*"
+      ]
+    }
+  ]
+}
+```
